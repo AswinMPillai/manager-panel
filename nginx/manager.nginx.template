@@ -1,0 +1,67 @@
+server {
+    listen 443 ssl http2;
+    server_name {{DOMAIN}};
+    root /var/www/html;
+    index index.html index.php;
+    client_max_body_size 100M;
+
+    ssl_certificate /etc/letsencrypt/live/{{DOMAIN}}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{DOMAIN}}/privkey.pem;
+
+    # FileBrowser
+    location /manager/files/ {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Manager frontend
+    location /manager/ {
+        root /var/www/html;
+        index index.html index.php;
+        try_files $uri $uri/ =404;
+        location ~ ^/manager/(?!files/).*\.php$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+        }
+    }
+
+    # phpMyAdmin
+    location /manager/db/ {
+        alias /usr/share/phpmyadmin/;
+        index index.php index.html index.htm;
+        location ~ ^/manager/db/(.+\.php)$ {
+            alias /usr/share/phpmyadmin/$1;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+        }
+        location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
+            alias /usr/share/phpmyadmin/$1;
+        }
+    }
+
+    # Crontab Editor
+    location /manager/crontab/ {
+        proxy_pass http://127.0.0.1:8765/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header X-Script-Name /manager/crontab;
+        proxy_redirect off;
+    }
+
+    access_log /var/log/nginx/{{DOMAIN}}_access.log;
+    error_log /var/log/nginx/{{DOMAIN}}_error.log;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+}
