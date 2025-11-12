@@ -64,12 +64,56 @@ sudo chmod -R 775 /var/www/html/manager
 echo "💾 Installing phpMyAdmin..."
 sudo apt install -y phpmyadmin
 
-# 8️⃣ Configure Nginx
-echo "🖥 Configuring Nginx..."
-sudo sed "s/{{DOMAIN}}/$DOMAIN/g" "$SCRIPT_DIR/nginx/manager.nginx.template" | sudo tee /etc/nginx/sites-available/$DOMAIN
+# 8️⃣ Configure HTTP-only Nginx first
+echo "🖥 Configuring temporary HTTP Nginx for $DOMAIN..."
+sudo tee /etc/nginx/sites-available/$DOMAIN > /dev/null <<EOL
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    root /var/www/html;
+    index index.html index.php;
+
+    # Frontend manager
+    location /manager/ {
+        try_files \$uri \$uri/ =404;
+        index index.html index.php;
+        location ~ ^/manager/.*\.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        }
+    }
+
+    # FileBrowser
+    location /manager/files/ {
+        proxy_pass http://127.0.0.1:8082/manager/files/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Port 80;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_redirect off;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Crontab Editor
+    location /manager/crontab/ {
+        proxy_pass http://127.0.0.1:8765/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Port 80;
+        proxy_set_header X-Script-Name /manager/crontab;
+        proxy_redirect off;
+    }
+}
+EOL
+
 sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
 sudo nginx -t
-sudo systemctl restart nginx
+sudo systemctl reload nginx
 
 # 9️⃣ Setup systemd services
 
@@ -113,9 +157,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now filebrowser
 sudo systemctl enable --now crontab-manager
 
-# 🔐 Setup SSL via Certbot
-echo "🔐 Setting up SSL for $DOMAIN..."
+# 🔐 Issue SSL with Certbot (will update Nginx to HTTPS automatically)
+echo "🔐 Issuing SSL certificate for $DOMAIN..."
 sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $EMAIL
+
+# 10️⃣ Test Nginx and reload
+sudo nginx -t
+sudo systemctl reload nginx
 
 echo "✅ Manager panel setup complete!"
 echo "Visit: https://$DOMAIN/manager"
