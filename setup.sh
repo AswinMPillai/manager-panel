@@ -2,34 +2,43 @@
 set -e
 
 # ===========================
-# Manager Panel Setup Script
+# Manager Panel Complete Setup Script
 # ===========================
 
-# Ensure paths are correct
+# Ensure script is running from its directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "🚀 Starting Manager Panel Setup..."
+echo "🚀 Starting Manager Panel Full Setup..."
 
-# 1️⃣ Ask for domain name
+# ---------------------------
+# 1️⃣ Ask for domain name and email
+# ---------------------------
 read -p "Enter your domain (e.g., manager.example.com): " DOMAIN
 if [[ -z "$DOMAIN" ]]; then
     echo "❌ Domain cannot be empty. Exiting."
     exit 1
 fi
 
-# 2️⃣ Ask for email for SSL
 read -p "Enter your email for SSL certificate (Let's Encrypt): " EMAIL
 if [[ -z "$EMAIL" ]]; then
     echo "❌ Email cannot be empty. Exiting."
     exit 1
 fi
 
-# 3️⃣ Update & install dependencies
+# ---------------------------
+# 2️⃣ Update system & install dependencies
+# ---------------------------
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y nginx python3 python3-venv python3-pip php8.2-fpm unzip curl certbot python3-certbot-nginx
+sudo apt install -y nginx python3 python3-venv python3-pip php8.2-fpm unzip curl certbot python3-certbot-nginx \
+                    redis-server gunicorn unzip wget zip
 
-# 4️⃣ Install FileBrowser
+# Enable Redis
+sudo systemctl enable --now redis-server
+
+# ---------------------------
+# 3️⃣ Install FileBrowser
+# ---------------------------
 echo "📂 Installing FileBrowser..."
 sudo mkdir -p /opt/filebrowser
 cd /opt/filebrowser
@@ -41,7 +50,9 @@ sudo mkdir -p /opt/filebrowser/data
 sudo touch /opt/filebrowser/data/filebrowser.db
 sudo chown -R www-data:www-data /opt/filebrowser
 
-# 5️⃣ Setup Crontab Editor
+# ---------------------------
+# 4️⃣ Setup Crontab Editor
+# ---------------------------
 echo "🕒 Setting up Crontab Editor..."
 sudo rm -rf /var/www/html/crontab-editor
 sudo mkdir -p /var/www/html/crontab-editor
@@ -49,10 +60,13 @@ sudo cp -r "$SCRIPT_DIR/crontab-editor/"* /var/www/html/crontab-editor/
 cd /var/www/html/crontab-editor
 python3 -m venv myenv
 source myenv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 deactivate
 
-# 6️⃣ Deploy frontend manager
+# ---------------------------
+# 5️⃣ Deploy Manager Frontend
+# ---------------------------
 echo "🌐 Deploying frontend manager..."
 sudo rm -rf /var/www/html/manager
 sudo mkdir -p /var/www/html/manager
@@ -60,54 +74,122 @@ sudo cp -r "$SCRIPT_DIR/manager/"* /var/www/html/manager
 sudo chown -R www-data:www-data /var/www/html/manager
 sudo chmod -R 775 /var/www/html/manager
 
-# 7️⃣ Install phpMyAdmin
+# ---------------------------
+# 6️⃣ Install phpMyAdmin
+# ---------------------------
 echo "💾 Installing phpMyAdmin..."
 sudo apt install -y phpmyadmin
+sudo mkdir -p /usr/share/phpmyadmin/tmp
+sudo chmod 777 /usr/share/phpmyadmin/tmp
+sudo chown www-data:www-data /usr/share/phpmyadmin/tmp
 
-# 8️⃣ Configure HTTP-only Nginx first
-echo "🖥 Configuring temporary HTTP Nginx for $DOMAIN..."
+# ---------------------------
+# 7️⃣ Configure Nginx for domain
+# ---------------------------
+echo "🖥 Configuring Nginx for $DOMAIN..."
 sudo tee /etc/nginx/sites-available/$DOMAIN > /dev/null <<EOL
 server {
     listen 80;
     server_name $DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name $DOMAIN;
 
     root /var/www/html;
     index index.html index.php;
+    client_max_body_size 100M;
 
-    # Frontend manager
-    location /manager/ {
-        try_files \$uri \$uri/ =404;
-        index index.html index.php;
-        location ~ ^/manager/.*\.php\$ {
-            include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
-        }
-    }
+    # SSL certificates
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
+    # --------------------------
     # FileBrowser
+    # --------------------------
     location /manager/files/ {
         proxy_pass http://127.0.0.1:8082/manager/files/;
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto http;
-        proxy_set_header X-Forwarded-Port 80;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_redirect off;
+        proxy_buffering off;
 
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
     }
 
-    # Crontab Editor
+    location /static/ {
+        proxy_pass http://127.0.0.1:8082/static/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+    }
+
+    # --------------------------
+    # Manager frontend
+    # --------------------------
+    location /manager/ {
+        root /var/www/html;
+        index index.html index.php;
+        try_files \$uri \$uri/ =404;
+
+        location ~ ^/manager/(?!files/).*\.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        }
+    }
+
+    # --------------------------
+    # phpMyAdmin
+    # --------------------------
+    location /manager/db/ {
+        alias /usr/share/phpmyadmin/;
+        index index.php index.html index.htm;
+
+        location ~ ^/manager/db/(.+\.php)\$ {
+            alias /usr/share/phpmyadmin/\$1;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+        }
+
+        location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))\$ {
+            alias /usr/share/phpmyadmin/\$1;
+        }
+    }
+
+    # --------------------------
+    # Crontab Manager
+    # --------------------------
     location /manager/crontab/ {
         proxy_pass http://127.0.0.1:8765/;
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Proto http;
-        proxy_set_header X-Forwarded-Port 80;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Script-Name /manager/crontab;
         proxy_redirect off;
     }
+
+    # --------------------------
+    # Logging
+    # --------------------------
+    access_log /var/log/nginx/${DOMAIN}_access.log;
+    error_log /var/log/nginx/${DOMAIN}_error.log;
+
+    # SSL settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_ciphers HIGH:!aNULL:!MD5;
 }
 EOL
 
@@ -115,9 +197,11 @@ sudo ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 
-# 9️⃣ Setup systemd services
+# ---------------------------
+# 8️⃣ Setup systemd services
+# ---------------------------
 
-# FileBrowser
+# FileBrowser service
 sudo tee /etc/systemd/system/filebrowser.service > /dev/null <<EOL
 [Unit]
 Description=FileBrowser Service
@@ -136,11 +220,11 @@ StandardError=journal
 WantedBy=multi-user.target
 EOL
 
-# Crontab Editor
+# Crontab Editor service
 sudo tee /etc/systemd/system/crontab-manager.service > /dev/null <<EOL
 [Unit]
 Description=Gunicorn Service for Crontab Manager
-After=network.target
+After=network.target redis.service
 
 [Service]
 User=root
@@ -157,13 +241,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now filebrowser
 sudo systemctl enable --now crontab-manager
 
-# 🔐 Issue SSL with Certbot (will update Nginx to HTTPS automatically)
-echo "🔐 Issuing SSL certificate for $DOMAIN..."
+# ---------------------------
+# 9️⃣ Issue SSL
+# ---------------------------
 sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $EMAIL
 
-# 10️⃣ Test Nginx and reload
+# ---------------------------
+# 1️⃣0️⃣ Final reload Nginx
+# ---------------------------
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "✅ Manager panel setup complete!"
+echo "✅ Manager Panel setup complete!"
 echo "Visit: https://$DOMAIN/manager"
+echo "phpMyAdmin: https://$DOMAIN/manager/db/"
+echo "Crontab Editor: https://$DOMAIN/manager/crontab/"
