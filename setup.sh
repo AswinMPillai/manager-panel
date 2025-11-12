@@ -84,20 +84,13 @@ sudo chmod 777 /usr/share/phpmyadmin/tmp
 sudo chown www-data:www-data /usr/share/phpmyadmin/tmp
 
 # ---------------------------
-# 7️⃣ Configure Nginx for domain
+# 7️⃣ Configure Nginx for domain 
 # ---------------------------
 echo "🖥 Configuring Nginx for $DOMAIN..."
 sudo tee /etc/nginx/sites-available/$DOMAIN > /dev/null <<EOL
 server {
-    listen 80;
-    server_name $DOMAIN;
-    return 301 https://\$host\$request_uri;
-}
-
-server {
     listen 443 ssl http2;
     server_name $DOMAIN;
-
     root /var/www/html;
     index index.html index.php;
     client_max_body_size 100M;
@@ -105,45 +98,47 @@ server {
     # SSL certificates
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     # --------------------------
-    # FileBrowser
+    # FileBrowser - HIGHEST PRIORITY (before any PHP processing)
     # --------------------------
     location /manager/files/ {
+        # Pass everything to FileBrowser, including .php files
         proxy_pass http://127.0.0.1:8082/manager/files/;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_redirect off;
         proxy_buffering off;
 
+        # WebSocket support
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
     }
 
+    # FileBrowser static assets
     location /static/ {
         proxy_pass http://127.0.0.1:8082/static/;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
     }
 
     # --------------------------
-    # Manager frontend
+    # /manager local files (NOT FileBrowser)
     # --------------------------
     location /manager/ {
         root /var/www/html;
         index index.html index.php;
-        try_files \$uri \$uri/ =404;
+        try_files $uri $uri/ =404;
 
-        location ~ ^/manager/(?!files/).*\.php\$ {
+        # PHP for /manager local files ONLY (exclude /manager/files/)
+        location ~ ^/manager/(?!files/).*\.php$ {
             include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+            fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
         }
     }
 
@@ -154,16 +149,16 @@ server {
         alias /usr/share/phpmyadmin/;
         index index.php index.html index.htm;
 
-        location ~ ^/manager/db/(.+\.php)\$ {
-            alias /usr/share/phpmyadmin/\$1;
+        location ~ ^/manager/db/(.+\.php)$ {
+            alias /usr/share/phpmyadmin/$1;
             fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
             fastcgi_index index.php;
             include fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
         }
 
-        location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))\$ {
-            alias /usr/share/phpmyadmin/\$1;
+        location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
+            alias /usr/share/phpmyadmin/$1;
         }
     }
 
@@ -172,7 +167,7 @@ server {
     # --------------------------
     location /manager/crontab/ {
         proxy_pass http://127.0.0.1:8765/;
-        proxy_set_header Host \$host;
+        proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Script-Name /manager/crontab;
@@ -180,12 +175,17 @@ server {
     }
 
     # --------------------------
+    # No general PHP processing - this server is for FileBrowser only
+    # Other domains handle PHP processing separately
+    # --------------------------
+
+    # --------------------------
     # Logging
     # --------------------------
     access_log /var/log/nginx/${DOMAIN}_access.log;
     error_log /var/log/nginx/${DOMAIN}_error.log;
 
-    # SSL settings
+    # SSL settings...
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
     ssl_session_cache shared:SSL:10m;
@@ -240,11 +240,6 @@ EOL
 sudo systemctl daemon-reload
 sudo systemctl enable --now filebrowser
 sudo systemctl enable --now crontab-manager
-
-# ---------------------------
-# 9️⃣ Issue SSL
-# ---------------------------
-sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $EMAIL
 
 # ---------------------------
 # 1️⃣0️⃣ Final reload Nginx
