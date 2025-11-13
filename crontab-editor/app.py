@@ -62,7 +62,10 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         logged_in = cache.get('logged_in')
-        app.logger.debug(f"Logged value: {logged_in if logged_in else 'No value found'}")
+        header_user = request.headers.get('X-Authenticated-User', '')
+        if header_user:
+            cache.set('logged_in', True, timeout=3600)
+            logged_in = True
         if not logged_in:
             return redirect(url_for('login'))
         return f(*args, **kwargs)

@@ -102,19 +102,22 @@ server {
     # --------------------------
     # FileBrowser - HIGHEST PRIORITY (before any PHP processing)
     # --------------------------
+    location ~ ^/manager/files/login {
+        return 302 /manager/files/;
+    }
     location /manager/files/ {
-        # Pass everything to FileBrowser, including .php files
+        auth_basic "Manager";
+        auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://127.0.0.1:8082/manager/files/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Remote-User $arg_user;
+        proxy_set_header Remote-User $remote_user;
         proxy_redirect off;
         proxy_buffering off;
 
-        # WebSocket support
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -132,6 +135,8 @@ server {
     # /manager local files (NOT FileBrowser)
     # --------------------------
     location /manager/ {
+        auth_basic "Manager";
+        auth_basic_user_file /etc/nginx/.htpasswd;
         root /var/www/html;
         index index.html index.php;
         try_files $uri $uri/ =404;
@@ -147,6 +152,8 @@ server {
     # phpMyAdmin
     # --------------------------
     location /manager/db/ {
+        auth_basic "Manager";
+        auth_basic_user_file /etc/nginx/.htpasswd;
         alias /usr/share/phpmyadmin/;
         index index.php index.html index.htm;
 
@@ -156,6 +163,7 @@ server {
             fastcgi_index index.php;
             include fastcgi_params;
             fastcgi_param SCRIPT_FILENAME $request_filename;
+            fastcgi_param REMOTE_USER $remote_user;
         }
 
         location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
@@ -167,11 +175,14 @@ server {
     # Crontab Manager
     # --------------------------
     location /manager/crontab/ {
+        auth_basic "Manager";
+        auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://127.0.0.1:8765/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Script-Name /manager/crontab;
+        proxy_set_header X-Authenticated-User $remote_user;
         proxy_redirect off;
     }
 
