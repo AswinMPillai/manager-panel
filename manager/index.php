@@ -123,7 +123,7 @@ $users = $loggedIn ? getSystemUsers() : [];
                 <h2 style="margin:10px 0 12px;">Users</h2>
                 <div class="users">
                     <?php foreach ($users as $u): $name=$u['username']; ?>
-                        <a class="user" href="?user=<?php echo urlencode($name); ?>">
+                        <a class="user" href="?user=<?php echo urlencode($name); ?>" target="_blank">
                             <div class="avatar"><?php echo strtoupper(substr($name,0,1)); ?></div>
                             <div>
                                 <div style="font-weight:600; color:#2c3e50;"><?php echo htmlspecialchars($name); ?></div>
@@ -134,18 +134,18 @@ $users = $loggedIn ? getSystemUsers() : [];
                 </div>
             <?php else: ?>
                 <h2 style="margin:10px 0 12px;">User: <?php echo htmlspecialchars($selectedUser); ?></h2>
-                <div class="panels">
-                    <div class="panel">
-                        <h3>File Browser</h3>
-                        <iframe src="/manager/files/"></iframe>
+                <div style="display:flex;flex-direction:column;gap:16px;margin-top:12px;">
+                    <div class="panel" style="padding:20px;">
+                        <h3 style="margin-bottom:12px;">File Manager</h3>
+                        <a class="button" href="/manager/files/" target="_blank">Open File Browser</a>
                     </div>
-                    <div class="panel">
-                        <h3>Database Manager</h3>
-                        <iframe src="/manager/db/"></iframe>
+                    <div class="panel" style="padding:20px;">
+                        <h3 style="margin-bottom:12px;">Databases</h3>
+                        <a class="button" href="/manager/db/" target="_blank">Open phpMyAdmin</a>
                     </div>
-                    <div class="panel">
-                        <h3>Crontab Manager</h3>
-                        <iframe src="/manager/crontab/edit/<?php echo urlencode($selectedUser); ?>"></iframe>
+                    <div class="panel" style="padding:20px;">
+                        <h3 style="margin-bottom:12px;">Crontab</h3>
+                        <a class="button" href="/manager/crontab/edit/<?php echo urlencode($selectedUser); ?>" target="_blank">Open Crontab Editor</a>
                     </div>
                 </div>
             <?php endif; ?>
