@@ -16,7 +16,20 @@ echo "🚀 Starting Manager Panel Installation..."
 # ---------------------------
 echo "📦 Installing dependencies..."
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y nginx python3 python3-venv python3-pip php php-fpm php-mysqli php-mbstring php-zip php-gd php-json php-curl \
+
+# Detect installed PHP version or install default
+if command -v php &> /dev/null; then
+    PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
+    echo "✓ PHP $PHP_VERSION detected"
+else
+    PHP_VERSION="8.2"
+    echo "→ Installing PHP $PHP_VERSION"
+fi
+
+# Install packages with specific PHP version
+sudo apt install -y nginx python3 python3-venv python3-pip \
+                    php${PHP_VERSION} php${PHP_VERSION}-fpm php${PHP_VERSION}-mysql php${PHP_VERSION}-mbstring \
+                    php${PHP_VERSION}-zip php${PHP_VERSION}-gd php${PHP_VERSION}-curl php${PHP_VERSION}-xml \
                     redis-server gunicorn unzip wget zip curl
 
 # Enable Redis
