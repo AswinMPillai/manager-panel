@@ -132,7 +132,7 @@ $users = $loggedIn ? getSystemUsers() : [];
                                     <td><span class="badge"><?php echo htmlspecialchars($u['home']); ?></span></td>
                                     <td>
                                         <div class="row-actions">
-                                            <a class="button" href="/manager/files/" target="_blank">File Manager</a>
+                                            <a class="button" href="/manager/files/?user=<?php echo urlencode($name); ?>" target="_blank">File Manager</a>
                                             <a class="button" href="/manager/db/" target="_blank">Databases</a>
                                             <a class="button" href="/manager/crontab/edit/<?php echo urlencode($name); ?>" target="_blank">Crontab</a>
                                         </div>
@@ -159,7 +159,7 @@ $users = $loggedIn ? getSystemUsers() : [];
                 <div style="display:flex;flex-direction:column;gap:16px;margin-top:12px;">
                     <div class="panel" style="padding:20px;">
                         <h3 style="margin-bottom:12px;">File Manager</h3>
-                        <a class="button" href="/manager/files/" target="_blank">Open File Browser</a>
+                        <a class="button" href="/manager/files/?user=<?php echo urlencode($selectedUser); ?>" target="_blank">Open File Browser</a>
                     </div>
                     <div class="panel" style="padding:20px;">
                         <h3 style="margin-bottom:12px;">Databases</h3>
