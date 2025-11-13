@@ -90,19 +90,31 @@ if [[ -d "$SCRIPT_DIR/crontab-editor" ]]; then
     cd /var/www/html/crontab-editor
     
     # Create virtual environment
-    python3 -m venv myenv
-    source myenv/bin/activate
-    pip install --upgrade pip
+    echo "  → Creating Python virtual environment..."
+    sudo python3 -m venv myenv
     
-    # Check if requirements.txt exists
+    # Install packages - MUST install gunicorn first before requirements.txt
+    echo "  → Installing Python packages..."
+    sudo myenv/bin/pip install --upgrade pip
+    sudo myenv/bin/pip install gunicorn Flask redis
+    
+    # Install additional requirements if available
     if [[ -f requirements.txt ]]; then
-        pip install -r requirements.txt
-    else
-        echo "⚠️  requirements.txt not found, skipping pip install"
+        echo "  → Installing from requirements.txt..."
+        sudo myenv/bin/pip install -r requirements.txt
     fi
     
-    deactivate
-    echo "✅ Crontab Editor installed"
+    # Ensure proper permissions
+    sudo chown -R root:root /var/www/html/crontab-editor
+    sudo chmod +x myenv/bin/*
+    
+    # Verify installation
+    if myenv/bin/pip list | grep -q gunicorn; then
+        echo "✅ Crontab Editor installed successfully"
+    else
+        echo "❌ Error: gunicorn installation failed"
+        exit 1
+    fi
 else
     echo "⚠️  crontab-editor directory not found in $SCRIPT_DIR, skipping..."
 fi
@@ -163,7 +175,7 @@ WantedBy=multi-user.target
 EOL
 
 # Crontab Editor service (only if directory exists)
-if [[ -d /var/www/html/crontab-editor ]]; then
+if [[ -d /var/www/html/crontab-editor ]] && [[ -f /var/www/html/crontab-editor/myenv/bin/gunicorn ]]; then
     sudo tee /etc/systemd/system/crontab-manager.service > /dev/null <<EOL
 [Unit]
 Description=Gunicorn Service for Crontab Manager
@@ -173,6 +185,7 @@ After=network.target redis.service
 User=root
 Group=root
 WorkingDirectory=/var/www/html/crontab-editor
+Environment="PATH=/var/www/html/crontab-editor/myenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/var/www/html/crontab-editor/myenv/bin/gunicorn --workers 3 --bind 0.0.0.0:8765 --forwarded-allow-ips=* wsgi:app
 Restart=always
 RestartSec=5
@@ -181,6 +194,9 @@ RestartSec=5
 WantedBy=multi-user.target
 EOL
     sudo systemctl enable crontab-manager
+    echo "✅ Crontab Manager service created"
+else
+    echo "⚠️  Gunicorn not found, skipping crontab-manager service"
 fi
 
 # Reload systemd and start services
@@ -207,11 +223,7 @@ if [[ -f /etc/systemd/system/crontab-manager.service ]]; then
 fi
 echo ""
 echo "📝 Next Steps:"
-echo "  1. Configure Nginx reverse proxy for:"
-echo "     - Manager Frontend: /var/www/html/manager"
-echo "     - FileBrowser: http://127.0.0.1:8082"
-echo "     - phpMyAdmin: /usr/share/phpmyadmin"
-echo "     - Crontab Editor: http://127.0.0.1:8765"
+echo "  1. Configure Nginx reverse proxy"
 echo "  2. Setup SSL certificate with certbot"
 echo "  3. Configure domain and firewall rules"
 echo ""
@@ -220,3 +232,139 @@ echo "   Username: admin"
 echo "   Password: (the password you just set)"
 echo ""
 echo "═══════════════════════════════════════════"
+echo ""
+
+# ---------------------------
+# 8️⃣ Create Nginx configuration example
+# ---------------------------
+echo "📄 Creating Nginx configuration example..."
+sudo tee /var/www/html/manager-nginx-example.conf > /dev/null <<'EOL'
+# =========================================
+# Manager Panel Nginx Configuration Example
+# =========================================
+# Copy this to: /etc/nginx/sites-available/manager-panel
+# Enable with: sudo ln -s /etc/nginx/sites-available/manager-panel /etc/nginx/sites-enabled/
+# Test config: sudo nginx -t
+# Reload nginx: sudo systemctl reload nginx
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;  # CHANGE THIS
+    root /var/www/html;
+    index index.html index.php;
+    client_max_body_size 100M;
+
+    # SSL certificates (Configure with certbot)
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;  # CHANGE THIS
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;  # CHANGE THIS
+
+    # --------------------------
+    # FileBrowser - HIGHEST PRIORITY
+    # --------------------------
+    location /manager/files/ {
+        proxy_pass http://127.0.0.1:8082/manager/files/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_redirect off;
+        proxy_buffering off;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # FileBrowser static assets
+    location /static/ {
+        proxy_pass http://127.0.0.1:8082/static/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+    }
+
+    # --------------------------
+    # Manager Frontend (local files)
+    # --------------------------
+    location /manager/ {
+        root /var/www/html;
+        index index.html index.php;
+        try_files $uri $uri/ =404;
+        
+        # PHP processing for manager frontend (exclude /manager/files/)
+        location ~ ^/manager/(?!files/).*\.php$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;  # Adjust PHP version if needed
+        }
+    }
+
+    # --------------------------
+    # phpMyAdmin
+    # --------------------------
+    location /manager/db/ {
+        alias /usr/share/phpmyadmin/;
+        index index.php index.html index.htm;
+        
+        location ~ ^/manager/db/(.+\.php)$ {
+            alias /usr/share/phpmyadmin/$1;
+            fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;  # Adjust PHP version if needed
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+        }
+        
+        location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
+            alias /usr/share/phpmyadmin/$1;
+        }
+    }
+
+    # --------------------------
+    # Crontab Manager
+    # --------------------------
+    location /manager/crontab/ {
+        proxy_pass http://127.0.0.1:8765/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header X-Script-Name /manager/crontab;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_redirect off;
+    }
+
+    # --------------------------
+    # Logging
+    # --------------------------
+    access_log /var/log/nginx/manager_access.log;
+    error_log /var/log/nginx/manager_error.log;
+
+    # --------------------------
+    # SSL Settings
+    # --------------------------
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name your-domain.com;  # CHANGE THIS
+    return 301 https://$server_name$request_uri;
+}
+EOL
+
+echo "✅ Nginx example configuration created at: /var/www/html/manager-nginx-example.conf"
+echo ""
+echo "📋 To use the Nginx configuration:"
+echo "  1. Edit the example file and change 'your-domain.com' to your domain"
+echo "  2. Adjust PHP-FPM socket path if needed (check with: ls /var/run/php/)"
+echo "  3. Copy to Nginx sites: sudo cp /var/www/html/manager-nginx-example.conf /etc/nginx/sites-available/manager-panel"
+echo "  4. Enable the site: sudo ln -s /etc/nginx/sites-available/manager-panel /etc/nginx/sites-enabled/"
+echo "  5. Get SSL certificate: sudo certbot --nginx -d your-domain.com"
+echo "  6. Test config: sudo nginx -t"
+echo "  7. Reload Nginx: sudo systemctl reload nginx"
+echo ""
