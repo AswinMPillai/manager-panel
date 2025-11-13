@@ -9,18 +9,12 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/{{DOMAIN}}/privkey.pem;
 
     # FileBrowser
-    location ~ ^/manager/files/login {
-        return 302 /manager/files/;
-    }
     location /manager/files/ {
-        auth_basic "Manager";
-        auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://127.0.0.1:8082;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Remote-User $remote_user;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -28,8 +22,6 @@ server {
 
     # Manager frontend
     location /manager/ {
-        auth_basic "Manager";
-        auth_basic_user_file /etc/nginx/.htpasswd;
         root /var/www/html;
         index index.html index.php;
         try_files $uri $uri/ =404;
@@ -41,8 +33,6 @@ server {
 
     # phpMyAdmin
     location /manager/db/ {
-        auth_basic "Manager";
-        auth_basic_user_file /etc/nginx/.htpasswd;
         alias /usr/share/phpmyadmin/;
         index index.php index.html index.htm;
         location ~ ^/manager/db/(.+\.php)$ {
@@ -51,7 +41,6 @@ server {
             fastcgi_index index.php;
             include fastcgi_params;
             fastcgi_param SCRIPT_FILENAME $request_filename;
-            fastcgi_param REMOTE_USER $remote_user;
         }
         location ~* ^/manager/db/(.+\.(?:jpg|jpeg|gif|css|png|js|ico|html|xml|txt))$ {
             alias /usr/share/phpmyadmin/$1;
@@ -60,14 +49,11 @@ server {
 
     # Crontab Editor
     location /manager/crontab/ {
-        auth_basic "Manager";
-        auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://127.0.0.1:8765/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Port 443;
         proxy_set_header X-Script-Name /manager/crontab;
-        proxy_set_header X-Authenticated-User $remote_user;
         proxy_redirect off;
     }
 
